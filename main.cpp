@@ -119,10 +119,10 @@ static int context_create(lua_State* L)
 
     int n = lua_rawlen(L, 1);
     size_t sz = GET_ENV_SIZE(n);
-    Context* ctx = (Context*)lua_newuserdata(L, sz);  // 3
+    Context* ctx = (Context*)lua_newuserdata(L, sz);  // 3 上下文
     ctx->num = n;
     Field* p = ctx->fields;
-    lua_newtable(L);  // 4
+    lua_newtable(L);  // 4 上下文的元表
     for (int i = 1; i <= n; ++i, ++p) {
         int t = lua_rawgeti(L, 1, i);
         if (LUA_TTABLE != t) {
@@ -133,6 +133,7 @@ static int context_create(lua_State* L)
         lua_getfield(L, -1, "type1"), p->type1 = lua_tointeger(L, -1), lua_pop(L, 1);
         lua_getfield(L, -1, "type2"), p->type2 = lua_tointeger(L, -1), lua_pop(L, 1);
         lua_getfield(L, -1, "type3"), p->type3 = lua_tointeger(L, -1), lua_pop(L, 1);
+        lua_getfield(L, -1, "name"), lua_rawseti(L, 4, p - ctx->fields);
 
         switch (p->type1) {
             case LTARS_BOOL:
@@ -161,13 +162,19 @@ static int context_create(lua_State* L)
                     else {
                         // 将字符串复制一份，避免指针失效
                         lua_pushvalue(L, -1);
-                        lua_rawseti(L, 4, i);
+                        lua_pushinteger(L, 1);
+                        lua_rawset(L, 4);
                     }
                 }
                 lua_pop(L, 1);
             } break;
         }
+
+        lua_pop(L, 1);
     }
+
+    // 设置元表
+    lua_setmetatable(L, 3);
 
     return 1;
 }
@@ -175,6 +182,51 @@ static int context_create(lua_State* L)
 // lua函数：编码结构体
 static int context_encode(lua_State* L)
 {
+    luaL_checktype(L, 1, LUA_TUSERDATA);
+    Context* ctx = (Context*)lua_touserdata(L, 1);
+    int id = luaL_checkinteger(L, 2);
+    luaL_checktype(L, 3, LUA_TTABLE);
+
+    lua_getmetatable(L, 1);  // 4 = 元表
+
+    if ((size_t)id >= (size_t)ctx->num) {
+        luaL_error(L, "无效的结构体 = %d, 最大值 = %d", id, ctx->num);
+    }
+
+    Field* rows[8] = {ctx->fields + id};
+    int n = 1;
+
+    luaL_Buffer buf;
+    luaL_buffinit(L, &buf);
+
+    while (n > 0) {
+        --n;
+        Field* row = rows[n];
+
+        do {
+            lua_rawgeti(L, 4, row - ctx->fields);  // 查询名称
+            std::string name = lua_tostring(L, -1);
+            int t = lua_rawget(L, 3);  // 使用名称查询值
+
+            switch (row->type1) {
+                case LTARS_BOOL: {
+                    std::cout << "bool = " << lua_toboolean(L, -1) << std::endl;
+                } break;
+                case LTARS_UINT:
+                case LTARS_LONG:
+                case LTARS_ULONG:
+                case LTARS_INT: {
+                }
+            }
+
+            std::cout << (int)row->tag << " " << name << " " << lua_typename(L, t) << std::endl;
+
+            lua_pop(L, 1);
+
+            row += 1;
+        } while (row < (ctx->fields + ctx->num) && row->tag != 0);
+    }
+
     return 1;
 }
 

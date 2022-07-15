@@ -23,7 +23,7 @@ local text = [[
         0 optional int iMsgSeq; // 消息序列
         1 optional int shCmd; // 命令字
         2 optional int shResultId; // 结果
-        3 optional string sCmdParam; // 返回结果
+        3 optional string sCmdParam = "fuck you"; // 返回结果
         4 optional bool bCompress = false; // 是否压缩
     };
 
@@ -64,6 +64,7 @@ local text = [[
 
     struct Test {
         0 optional TQuickIdleDb stDb;
+        1 optional bool bTest;
     };
 ]]
 
@@ -172,4 +173,11 @@ for line in text:gmatch("[^\n]+") do
 end
 
 local env = tars.create(fields, host)
-print(env)
+
+-- for k, v in pairs(getmetatable(env)) do
+--     print(k, v)
+-- end
+
+print(tars.encode(env, host["Test"], {
+    bTest = true
+}))
