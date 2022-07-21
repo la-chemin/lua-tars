@@ -63,7 +63,7 @@ local text = [[
     };
 
     struct Test {
-        0 optional TQuickIdleDb stDb;
+        0 optional TQuickIdleDb stQuickIdleDb;
         1 optional bool bTest;
     };
 ]]
@@ -179,5 +179,6 @@ local env = tars.create(fields, host)
 -- end
 
 print(tars.encode(env, host["Test"], {
-    bTest = true
+    bTest = true,
+    stQuickIdleDb = {}
 }))

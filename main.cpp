@@ -150,6 +150,7 @@ static int context_create(lua_State* L)
             case LTARS_STRING: {
                 int tt = lua_getfield(L, -1, "default");
                 if (LUA_TNONE == tt || LUA_TNIL == tt) {
+                    // 没有给字符串的默认值
                     p->def.s = nullptr;
                 }
                 else if (LUA_TSTRING == tt) {
@@ -179,53 +180,101 @@ static int context_create(lua_State* L)
     return 1;
 }
 
+template <typename... Args>
+std::string format(const char* f, Args... args)
+{
+    char buf[256];
+    size_t n = snprintf(buf, sizeof buf, f, args...);
+    if (n > sizeof buf) {
+        n = sizeof buf;
+    }
+    return std::string(buf, n);
+}
+
+// 基础类型编码
+// @param field: 字段定义
+// @param type: lua数据类型
+static int __raw_encode(lua_State* L, luaL_Buffer* B, Field* field, int type)
+{
+    switch (field->type1) {
+        // TODO: 校验默认值是否一样，一样则不写数据
+        case LTARS_BOOL: {
+            auto s = format("%d %s", field->tag, (lua_toboolean(L, -1) ? "true" : "false"));
+            luaL_addlstring(B, s.c_str(), s.size());
+        } break;
+        case LTARS_UINT:
+        case LTARS_LONG:
+        case LTARS_ULONG:
+        case LTARS_INT: {
+            auto s = format("%d %d", field->tag, lua_tointeger(L, -1));
+            luaL_addlstring(B, s.c_str(), s.size());
+        } break;
+        case LTARS_FLOAT:
+        case LTARS_DOUBLE: {
+            auto s = format("%d %f", field->tag, lua_tonumber(L, -1));
+            luaL_addlstring(B, s.c_str(), s.size());
+        } break;
+        default: {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+#define __MODE_STRUCT 0
+#define __MODE_LIST 1
+#define __MODE_MAP 2
+
+static void __encode(lua_State* L, luaL_Buffer* B, Context* ctx, int row, int mode)
+{
+    if (__MODE_STRUCT == mode) {
+        do {
+            lua_rawgeti(L, 4, row);  // 先查询字段名称
+            std::string name(lua_tostring(L, -1));
+            std::cerr << name << ":" << lua_typename(L, lua_type(L, -2)) << std::endl;
+            int type = lua_rawget(L, -2);  // 再从lua表中查询字段数据
+
+            Field* field = ctx->fields + row;
+            if (!__raw_encode(L, B, field, type)) {
+                if (LTARS_LIST == field->type1) {
+                    // 写数组
+                    __encode(L, B, ctx, row, __MODE_LIST);
+                }
+                else if (LTARS_MAP == field->type1) {
+                    // 写字典
+                    __encode(L, B, ctx, row, __MODE_MAP);
+                }
+                else {
+                    // 写结构体
+                    __encode(L, B, ctx, field->type1 - 100, __MODE_STRUCT);
+                }
+            }
+            lua_pop(L, 1);
+            row += 1;
+        } while (row < ctx->num && ctx->fields[row].tag != 0);
+    }
+    else if (__MODE_LIST == mode) {
+    }
+}
+
 // lua函数：编码结构体
 static int context_encode(lua_State* L)
 {
     luaL_checktype(L, 1, LUA_TUSERDATA);
     Context* ctx = (Context*)lua_touserdata(L, 1);
     int id = luaL_checkinteger(L, 2);
-    luaL_checktype(L, 3, LUA_TTABLE);
-
-    lua_getmetatable(L, 1);  // 4 = 元表
-
     if ((size_t)id >= (size_t)ctx->num) {
         luaL_error(L, "无效的结构体 = %d, 最大值 = %d", id, ctx->num);
     }
-
-    Field* rows[8] = {ctx->fields + id};
-    int n = 1;
+    luaL_checktype(L, 3, LUA_TTABLE);
+    lua_settop(L, 3);
+    lua_getmetatable(L, 1);  // 4 = 元表
+    lua_pushvalue(L, 3);     // -1 = 3
 
     luaL_Buffer buf;
     luaL_buffinit(L, &buf);
-
-    while (n > 0) {
-        --n;
-        Field* row = rows[n];
-
-        do {
-            lua_rawgeti(L, 4, row - ctx->fields);  // 查询名称
-            std::string name = lua_tostring(L, -1);
-            int t = lua_rawget(L, 3);  // 使用名称查询值
-
-            switch (row->type1) {
-                case LTARS_BOOL: {
-                    std::cout << "bool = " << lua_toboolean(L, -1) << std::endl;
-                } break;
-                case LTARS_UINT:
-                case LTARS_LONG:
-                case LTARS_ULONG:
-                case LTARS_INT: {
-                }
-            }
-
-            std::cout << (int)row->tag << " " << name << " " << lua_typename(L, t) << std::endl;
-
-            lua_pop(L, 1);
-
-            row += 1;
-        } while (row < (ctx->fields + ctx->num) && row->tag != 0);
-    }
+    __encode(L, &buf, ctx, id, __MODE_STRUCT);
+    luaL_pushresult(&buf);
 
     return 1;
 }
