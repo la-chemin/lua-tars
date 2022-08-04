@@ -75,26 +75,26 @@ local host = {}
 -- 常见类型
 local types = {
     ["bool"] = 1,
-    ["int"] = 2,
-    ["u_int"] = 3,
-    ["long"] = 4,
-    ["u_long"] = 5,
-    ["float"] = 6,
-    ["double"] = 7,
-    ["string"] = 8,
-    ["map"] = 9,
-    ["vector"] = 10,
-    ["vector<char>"] = 11,
+    ["byte"] = 2,
+    ["u_byte"] = 3,
+    ["short"] = 4,
+    ["u_short"] = 5,
+    ["int"] = 6,
+    ["u_int"] = 7,
+    ["long"] = 8,
+    ["u_long"] = 9,
+    ["float"] = 10,
+    ["double"] = 11,
+    ["string"] = 12,
+    ["map"] = 13,
+    ["vector"] = 14,
 }
 
 -- 支持的键类型
-local map_keys = {
-    ["int"] = 2,
-    ["u_int"] = 3,
-    ["long"] = 4,
-    ["u_long"] = 5,
-    ["string"] = 8,
-}
+local map_keys = {}
+for __, key in ipairs{"int", "u_int", "long", "u_long", "string"} do
+    map_keys[key] = assert(types[key])
+end
 
 -- 解析类型
 local function parse_type(data_type)
