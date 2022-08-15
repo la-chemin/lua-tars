@@ -167,8 +167,7 @@ for line in text:gmatch("[^\n]+") do
             type3 = type3, -- 类型3
             default = parse_default(default) -- 默认值
         })
-
-        parse_type(data_type)
+        print(name, type1)
     end
 end
 
@@ -178,7 +177,8 @@ local env = tars.create(fields, host)
 --     print(k, v)
 -- end
 
-print(tars.encode(env, host["Test"], {
+local s = tars.encode(env, host["Test"], {
     bTest = true,
     stQuickIdleDb = {}
-}))
+})
+print(#s)
