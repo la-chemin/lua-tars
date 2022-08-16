@@ -108,16 +108,16 @@ local function parse_type(data_type)
         assert(type1 == "map")
         -- 必须是常见的key
         assert(map_keys[type2])
-        return types[type1], map_keys[type2], types[type3] or (100 + host[type3])
+        return types[type1], map_keys[type2], types[type3] or host[type3]
     end
 
     if type2 and type2 ~= "" then
         -- 必须是vector
         assert(type1 == "vector")
-        return types[type1], types[type2] or (100 + host[type2]), 0
+        return types[type1], types[type2] or host[type2], 0
     end
     
-    return types[type1] or (100 + host[type1]), 0, 0
+    return types[type1] or host[type1], 0, 0
 end
 
 -- 解析默认值
@@ -151,8 +151,10 @@ for line in text:gmatch("[^\n]+") do
 
     local struct_name = line_no_comment:match("struct%s+(%w+)")
     if struct_name then
-        -- 记录结构体的起始位置
-        host[struct_name] = #(fields)
+        -- 记录结构体的起始位置 + 偏移值100
+        host[struct_name] = #(fields) + 100
+
+        last = struct_name
     end
 
     local tag, forced, data_type, name, default = line_no_comment:match("(%d+) (%w+) (%a[%w<>_,]+) (%a[%w_]*) ?=? ?(.*);")
@@ -167,7 +169,7 @@ for line in text:gmatch("[^\n]+") do
             type3 = type3, -- 类型3
             default = parse_default(default) -- 默认值
         })
-        print(name, type1)
+        print(last, name, type1, type2)
     end
 end
 

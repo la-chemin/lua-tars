@@ -234,16 +234,16 @@ int Context::write_field(lua_State* L, WriteBuffer& buffer, uint16_t row, uint8_
             }
         } break;
         default: {
-            return 0;
+            return field.type1;
         }
     }
-    return field.type1;
+    return 0;
 }
 
 int Context::encode(lua_State* L, WriteBuffer& buffer, uint8_t mode, uint16_t row, uint8_t ltype) const
 {
     lua_rawgeti(L, 4, row);
-    std::cout << "编码:" << (int)row << ", " << lua_tostring(L, -1) << std::endl; 
+    std::cout << "编码:" << (int)row << ", " << lua_tostring(L, -1) << std::endl;
     lua_pop(L, 1);
 
     if (LUA_TNIL == ltype) {
@@ -255,7 +255,9 @@ int Context::encode(lua_State* L, WriteBuffer& buffer, uint8_t mode, uint16_t ro
             lua_rawgeti(L, 4, row);
             luaL_error(L, "%s 需要一个table，实际传递了%s", lua_tostring(L, -1), lua_typename(L, ltype));
         }
-        std::cout << row << std::endl;
+        lua_rawgeti(L, 4, row);
+        std::cout << row << " = " << lua_tostring(L, -1) << std::endl;
+        lua_pop(L, 1);
         buffer.header(TarsHeadeStructBegin, fields[row].tag);
         do {
             // 用名称从数据表中字段数据
@@ -264,18 +266,22 @@ int Context::encode(lua_State* L, WriteBuffer& buffer, uint8_t mode, uint16_t ro
             if (0 != write_field(L, buffer, row, ltype)) {
                 if (LTARS_LIST == fields[row].type1) {
                     encode(L, buffer, __MODE_LIST, row, ltype);
-                } else if (LTARS_MAP == fields[row].type1) {
+                }
+                else if (LTARS_MAP == fields[row].type1) {
                     encode(L, buffer, __MODE_MAP, row, ltype);
-                } else {
+                }
+                else {
                     if (fields[row].type1 < 100) {
-                        luaL_error(L, "未预料的类型 %d %d", fields[row].type1, fields[row].type2);
+                        luaL_error(L, "未预料的类型 row = %d, type1 =  %d, type2 = %d", fields[row].type1, fields[row].type2);
                     }
                     // 编码结构体
+                    std::cout << "编码结构体:" << row << ", 类型=" << (int)fields[row].type1 << std::endl;
                     encode(L, buffer, __MODE_STRUCT, fields[row].type1 - 100, ltype);
                 }
             }
             lua_pop(L, 1);
             row += 1;
+            std::cout << "row + 1 = " << row << std::endl;
         } while (row < num || fields[row].tag == 0);
         buffer.header(TarsHeadeStructEnd, 0);
 
@@ -410,7 +416,7 @@ static int context_encode(lua_State* L)
 {
     luaL_checktype(L, 1, LUA_TUSERDATA);
     Context* ctx = (Context*)lua_touserdata(L, 1);
-    int id = luaL_checkinteger(L, 2);
+    int id = luaL_checkinteger(L, 2) - 100;
     if ((size_t)id >= (size_t)ctx->num) {
         luaL_error(L, "无效的结构体 = %d, 最大值 = %d", id, ctx->num);
     }
