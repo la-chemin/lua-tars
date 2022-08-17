@@ -175,12 +175,15 @@ int Context::write_field(lua_State* L, WriteBuffer& buffer, uint16_t row, uint8_
                 bool b = lua_toboolean(L, -1);
                 if (field.def.l != b) {
                     buffer.write(b, field.tag);
+
+                    // std::cout << "写入了一个布尔" << b << std::endl;
                 }
             }
             else if (LUA_TNIL == ltype) {
                 if (field.forced) {
                     bool b = field.def.l;
                     buffer.write(b, field.tag);
+                    // std::cout << "写入了一个布尔" << b << std::endl;
                 }
             }
             else {
@@ -200,12 +203,14 @@ int Context::write_field(lua_State* L, WriteBuffer& buffer, uint16_t row, uint8_
                 int64_t n = lua_tointeger(L, -1);
                 if (field.def.l != n) {
                     buffer.write(n, field.tag);
+                    // std::cout << "写入了一个整数" << n << std::endl;
                 }
             }
             else if (LUA_TNIL == ltype) {
                 if (field.forced) {
                     int64_t n = field.def.l;
                     buffer.write(n, field.tag);
+                    // std::cout << "写入了一个整数" << n << std::endl;
                 }
             }
             else {
@@ -242,9 +247,9 @@ int Context::write_field(lua_State* L, WriteBuffer& buffer, uint16_t row, uint8_
 
 int Context::encode(lua_State* L, WriteBuffer& buffer, uint8_t mode, uint16_t row, uint8_t ltype) const
 {
-    lua_rawgeti(L, 4, row);
-    std::cout << "编码:" << (int)row << ", " << lua_tostring(L, -1) << std::endl;
-    lua_pop(L, 1);
+    // lua_rawgeti(L, 4, row);
+    // std::cout << "编码:" << (int)row << ", " << lua_tostring(L, -1) << std::endl;
+    // lua_pop(L, 1);
 
     if (LUA_TNIL == ltype) {
         // 空类型不处理
@@ -255,11 +260,11 @@ int Context::encode(lua_State* L, WriteBuffer& buffer, uint8_t mode, uint16_t ro
             lua_rawgeti(L, 4, row);
             luaL_error(L, "%s 需要一个table，实际传递了%s", lua_tostring(L, -1), lua_typename(L, ltype));
         }
-        lua_rawgeti(L, 4, row);
-        std::cout << row << " = " << lua_tostring(L, -1) << std::endl;
-        lua_pop(L, 1);
-        buffer.header(TarsHeadeStructBegin, fields[row].tag);
+        // lua_rawgeti(L, 4, row);
+        // std::cout << row << " = " << lua_tostring(L, -1) << std::endl;
+        // lua_pop(L, 1);
         do {
+            // std::cout<< "写入" << (int)row << ", 类型" << (int)fields[row].tag << std::endl;
             // 用名称从数据表中字段数据
             lua_rawgeti(L, 4, row);
             ltype = lua_rawget(L, -2);
@@ -275,17 +280,17 @@ int Context::encode(lua_State* L, WriteBuffer& buffer, uint8_t mode, uint16_t ro
                         luaL_error(L, "未预料的类型 row = %d, type1 =  %d, type2 = %d", fields[row].type1, fields[row].type2);
                     }
                     // 编码结构体
-                    std::cout << "编码结构体:" << row << ", 类型=" << (int)fields[row].type1 << std::endl;
+                    // std::cout << "编码结构体:" << row << ", 类型=" << (int)fields[row].type1 << std::endl;
+                    buffer.header(TarsHeadeStructBegin, fields[row].tag);
                     encode(L, buffer, __MODE_STRUCT, fields[row].type1 - 100, ltype);
+                    buffer.header(TarsHeadeStructEnd, 0);
                 }
             }
             lua_pop(L, 1);
             row += 1;
-            std::cout << "row + 1 = " << row << std::endl;
-        } while (row < num || fields[row].tag == 0);
-        buffer.header(TarsHeadeStructEnd, 0);
+        } while (row < num && fields[row].tag != 0);
 
-        std::cout << "encode struct, size = " << buffer.size() << std::endl;
+        // std::cout << "encode struct, size = " << buffer.size() << std::endl;
     }
     else if (__MODE_LIST == mode) {
         if (LTARS_INT8 == fields[row].type2) {
@@ -313,7 +318,9 @@ int Context::encode(lua_State* L, WriteBuffer& buffer, uint8_t mode, uint16_t ro
             ltype = lua_rawgeti(L, -1, i);
             if (0 != write_field(L, buffer, fields[row].type1, ltype)) {
                 // TODO: 支持map<int, vector<int>>
+                buffer.header(TarsHeadeStructBegin, fields[row].tag);
                 encode(L, buffer, __MODE_STRUCT, fields[row].type1, ltype);
+                buffer.header(TarsHeadeStructEnd, 0);
             }
             lua_pop(L, 1);
         }
@@ -427,8 +434,6 @@ static int context_encode(lua_State* L)
 
     WriteBuffer buff;
     ctx->encode(L, buff, __MODE_STRUCT, id, LUA_TTABLE);
-
-    std::cout << "size = " << buff.size() << std::endl;
 
     lua_pushlstring(L, buff.data(), buff.size());
     return 1;

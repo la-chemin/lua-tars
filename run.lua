@@ -1,5 +1,3 @@
-print "hello, world"
-
 local tars = require "tars"
 
 local text = [[
@@ -68,8 +66,9 @@ local text = [[
     };
 ]]
 
--- 所有字段
+-- 存放了所有字段的数组
 local fields = {}
+-- 结构体名称到上面数组的映射：name->(index + 100)
 local host = {}
 
 -- 常见类型
@@ -90,7 +89,8 @@ local types = {
     ["vector"] = 14,
 }
 
--- 支持的键类型
+-- map支持的键类型
+-- 先限定只能用基础类型
 local map_keys = {}
 for __, key in ipairs{"int", "u_int", "long", "u_long", "string"} do
     map_keys[key] = assert(types[key])
@@ -169,7 +169,6 @@ for line in text:gmatch("[^\n]+") do
             type3 = type3, -- 类型3
             default = parse_default(default) -- 默认值
         })
-        print(last, name, type1, type2)
     end
 end
 
@@ -179,8 +178,16 @@ local env = tars.create(fields, host)
 --     print(k, v)
 -- end
 
-local s = tars.encode(env, host["Test"], {
-    bTest = true,
-    stQuickIdleDb = {}
+local s = tars.encode(env, host["TQuickIdleDb"], {
+    iFreeTime = 999,
+    iBuyTime = 888,
+    iAlreadyBuyTime = 314,
+    iRefreshTime = 2145,
+    iLifeNums = 18274
 })
-print(#s)
+
+print(s:byte(1, -1))
+
+local t = io.popen("echo AQPnEQN4IQE6MQhhQUdi | base64 -d"):read("*a")
+print(t:byte(1, -1))
+
