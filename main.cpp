@@ -140,6 +140,12 @@ struct WriteBuffer : public std::string {
     }
 };
 
+// 读缓存
+struct ReadBuffer : public std::string {
+    size_t i;
+    ReadBuffer() : i(0) {}
+};
+
 // 协议的字段
 struct Field {
     uint8_t tag;            // 字段的序号
@@ -159,6 +165,8 @@ struct Context {
     int encodeStruct(lua_State* L, WriteBuffer& buffer, uint16_t row, uint8_t ltype) const;
     int encodeList(lua_State* L, WriteBuffer& buffer, uint16_t tag, int type, uint8_t ltype) const;
     int encodeMap(lua_State* L, WriteBuffer& buffer, uint16_t tag, int type1, int type2, uint8_t ltype) const;
+
+    int decodeStruct(lua_State* L, ReadBuffer& buffer, uint16_t row, uint16_t tag);
 };
 
 int Context::write(lua_State* L, WriteBuffer& buffer, int type1, int tag, int ltype, int def, bool forced) const
@@ -396,6 +404,31 @@ int Context::encodeMap(lua_State* L, WriteBuffer& buffer, uint16_t tag, int type
     return 0;
 }
 
+int Context::decodeStruct(lua_State* L, ReadBuffer& buffer, uint16_t row, uint16_t tag)
+{
+    // TODO: 根据结构体的大小预先分配表的大小
+    lua_newtable(L);
+    do {
+        auto& field = fields[row];
+        lua_rawgeti(L, 4, row);  // 名称
+        if (field.type1 <= LTARS_STRING) {
+            // 读取基本类型
+        }
+        else if (field.type1 == LTARS_MAP) {
+            // 读取字典
+        }
+        else if (field.type1 == LTARS_LIST) {
+            // 读取数组
+        }
+        else {
+            // 读取结构体
+        }
+        // read_field(L, buffer, );
+        row += 1;
+    } while (row < num && fields[row].tag != 0);
+    return 1;
+}
+
 // 上下文的大小
 #define GET_ENV_SIZE(n) ((n) * sizeof(Field) + sizeof(Context))
 
@@ -492,7 +525,7 @@ static int context_encode(lua_State* L)
     luaL_checktype(L, 3, LUA_TTABLE);
     lua_settop(L, 3);
     lua_getmetatable(L, 1);  // 4 = 元表
-    lua_pushvalue(L, 3);     // -1 = 3
+    lua_pushvalue(L, 3);     // 3 => -1
 
     WriteBuffer buff;
     ctx->encodeStruct(L, buff, id, LUA_TTABLE);
@@ -502,12 +535,32 @@ static int context_encode(lua_State* L)
 }
 
 // lua函数：编码数组
-// tars.encodeList(Context, Type, Table)
+// tars.encodeList(Context, Type, String)
 static int context_encodelist(lua_State* L)
 {
     luaL_checktype(L, 1, LUA_TUSERDATA);
+    luaL_error(L, "TODO: 该函数没有实现");
+    return 1;
+}
+
+// lua函数：解码结构体
+// tars.decode(Context, StructId, Table)
+static int context_decode(lua_State* L)
+{
+    luaL_checktype(L, 1, LUA_TUSERDATA);
     Context* ctx = (Context*)lua_touserdata(L, 1);
-    int id = luaL_checkinteger(L, 2);
+    int id = luaL_checkinteger(L, 2) - 100;
+    size_t sz = 0;
+    const char* s = luaL_checklstring(L, 2, &sz);
+    lua_settop(L, 3);
+    lua_getmetatable(L, 1);  // 4 = 元表
+    lua_pushvalue(L, 3);     // 3 => -1
+
+    ReadBuffer buff;
+    buff.assign(s, sz);
+
+    ctx->decodeStruct(L, buff, id, 0);
+
     return 1;
 }
 
@@ -517,6 +570,7 @@ static int luaopen_tars(lua_State* L)
     luaL_Reg reg[]{
         {"create", context_create},
         {"encode", context_encode},
+        {"decode", context_decode},
         {nullptr, nullptr},
     };
     luaL_newlib(L, reg);
