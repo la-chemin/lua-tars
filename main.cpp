@@ -144,6 +144,67 @@ struct WriteBuffer : public std::string {
 struct ReadBuffer : public std::string {
     size_t i;
     ReadBuffer() : i(0) {}
+
+    bool checksz(size_t n) const { return (i + n) < size(); }
+
+    int header(uint8_t& tag, uint8_t& type) const
+    {
+        uint8_t c = at(i);
+        if (0xF0 == (0xF0 & c)) {
+            type = 0x0F & c;
+            tag = at(i + 1);
+            return 2;
+        }
+        else {
+            type = c & 0x0F;
+            tag = (c >> 4);
+            return 1;
+        }
+    }
+
+    void skip(size_t n) { i += n; }
+
+    int read(size_t offset, uint8_t& c) const
+    {
+        c = at(offset);
+        return sizeof(c);
+    }
+
+    int read(size_t offset, int8_t& c) const
+    {
+        c = at(offset);
+        return sizeof(c);
+    }
+
+    int read(size_t offset, int16_t& n) const
+    {
+        n = ntohs(*(const int16_t*)(data() + offset));
+        return sizeof(n);
+    }
+
+    int read(size_t offset, uint16_t& n) const
+    {
+        n = ntohs(*(const uint16_t*)(data() + offset));
+        return sizeof(n);
+    }
+
+    int read(size_t offset, int32_t& n) const
+    {
+        n = ntohl(*(const int32_t*)(data() + offset));
+        return sizeof(n);
+    }
+
+    int read(size_t offset, uint32_t& n) const
+    {
+        n = ntohl(*(const uint32_t*)(data() + offset));
+        return sizeof(n);
+    }
+
+    int read(size_t offset, int64_t& n) const
+    {
+        n = be64toh(*(const int64_t*)(data() + offset));
+        return sizeof(n);
+    }
 };
 
 // 协议的字段
@@ -166,6 +227,7 @@ struct Context {
     int encodeList(lua_State* L, WriteBuffer& buffer, uint16_t tag, int type, uint8_t ltype) const;
     int encodeMap(lua_State* L, WriteBuffer& buffer, uint16_t tag, int type1, int type2, uint8_t ltype) const;
 
+    int read(lua_State* L, ReadBuffer& buffer, int type1, int tag, int def);
     int decodeStruct(lua_State* L, ReadBuffer& buffer, uint16_t row, uint16_t tag);
 };
 
@@ -404,6 +466,81 @@ int Context::encodeMap(lua_State* L, WriteBuffer& buffer, uint16_t tag, int type
     return 0;
 }
 
+// 检测大小
+#define _CHECK_SZ(Size, Tag)                                                                                   \
+    if (!buffer.checksz((Size))) {                                                                             \
+        luaL_error(L, "读取字段%d时报错，字节流被截断了，还需要%d，全部长度%d", (Tag), (Size), buffer.size()); \
+    }
+
+// 读取一个字段
+int Context::read(lua_State* L, ReadBuffer& buffer, int type1, int tag, int def)
+{
+    // 1. 从当前的位置开始读取字节流，直到读取到最后一个不大于当前字段序号的段落开始
+    // 2. 如果读取到一个段落开始，且这个段落的序号小于当前字段的序号，则表明字节流序列错误，应该中断并报错
+    // 3. 如果正确地读取到段落，根据当前字段类型使用解析方式读取就可以
+    // 4. 如果没有读取到段落，则使用字段的默认数值
+    // 5. 读取了字段后，应该移动字节流的读取位置到下一个字段
+
+    uint8_t tag0, type0;
+    size_t n = 0;
+    if (buffer.checksz(2)) {
+        n += buffer.header(tag0, type0);
+        if (tag < tag0) {
+            luaL_error(L, "字节序列错误，尝试读取字段%d，实际读取到序号%d", tag, tag0);
+        }
+    }
+    switch (type1) {
+        case LTARS_BOOL: {
+            uint8_t b = 0;
+            if (n < 1) {
+                // 使用默认值
+                b = def;
+            }
+            else if (TarsHeadeZeroTag == tag0) {
+                // 0值
+                b = 0;
+            }
+            else if (TarsHeadeChar == tag0) {
+                _CHECK_SZ(n + sizeof(b), tag);
+                n += buffer.read(n, b);
+            }
+            else {
+                luaL_error(L, "读取字段%d失败，需要一个布尔，实际类型是%d", tag, type0);
+            }
+            if (b > 1) {
+                luaL_error(L, "读取字段%d失败，不是一个正确的布尔值%d", tag, b);
+            }
+            lua_pushboolean(L, b);
+        } break;
+        case LTARS_INT8:
+        case LTARS_INT16:
+        case LTARS_INT32:
+        case LTARS_INT64: {
+            int8_t b = 0;
+            if (n < 1) {
+                // 使用默认值
+                b = def;
+            }
+            else if (TarsHeadeZeroTag == tag0) {
+                // 0值
+                b = 0;
+            }
+            else if (TarsHeadeChar == tag0) {
+                _CHECK_SZ(n + sizeof(b), tag);
+                n += buffer.read(n, b);
+            }
+            else {
+                luaL_error(L, "读取字段%d失败，需要一个布尔，实际类型是%d", tag, type0);
+            }
+            if (b > 1) {
+                luaL_error(L, "读取字段%d失败，不是一个正确的8位整数%d", tag, b);
+            }
+            lua_pushinteger(L, b);
+        } break;
+    }
+    return 0;
+}
+
 int Context::decodeStruct(lua_State* L, ReadBuffer& buffer, uint16_t row, uint16_t tag)
 {
     // TODO: 根据结构体的大小预先分配表的大小
@@ -413,6 +550,7 @@ int Context::decodeStruct(lua_State* L, ReadBuffer& buffer, uint16_t row, uint16
         lua_rawgeti(L, 4, row);  // 名称
         if (field.type1 <= LTARS_STRING) {
             // 读取基本类型
+            read(L, buffer, field.type1, field.tag, field.def);
         }
         else if (field.type1 == LTARS_MAP) {
             // 读取字典
