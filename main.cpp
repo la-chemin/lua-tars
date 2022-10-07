@@ -46,6 +46,32 @@
 // 最长字符串长度
 #define _MAX_STR_LEN (100 * 1024 * 1024)
 
+#define _ENUM_CASE(Enum) \
+    case (Enum):         \
+        return (#Enum);
+
+// tars类型的名称
+static const char* _tars_type_name(uint8_t type)
+{
+    switch (type) {
+        _ENUM_CASE(TarsHeadeChar);
+        _ENUM_CASE(TarsHeadeShort);
+        _ENUM_CASE(TarsHeadeInt32);
+        _ENUM_CASE(TarsHeadeInt64);
+        _ENUM_CASE(TarsHeadeFloat);
+        _ENUM_CASE(TarsHeadeDouble);
+        _ENUM_CASE(TarsHeadeString1);
+        _ENUM_CASE(TarsHeadeString4);
+        _ENUM_CASE(TarsHeadeMap);
+        _ENUM_CASE(TarsHeadeList);
+        _ENUM_CASE(TarsHeadeStructBegin);
+        _ENUM_CASE(TarsHeadeStructEnd);
+        _ENUM_CASE(TarsHeadeZeroTag);
+        _ENUM_CASE(TarsHeadeSimpleList);
+    }
+    return "InvalidHeade";
+}
+
 // 写缓存
 struct WriteBuffer : public std::string {
     // 基础数据序列化
@@ -145,14 +171,16 @@ struct ReadBuffer : public std::string {
     size_t i;
     ReadBuffer() : i(0) {}
 
-    bool checksz(size_t n) const { return (i + n) < size(); }
+    // 检测缓存是否够
+    bool checksz(size_t n) const { return (tellp() + n) < size(); }
 
+    // 读取头部信息
     int header(uint8_t& tag, uint8_t& type) const
     {
-        uint8_t c = at(i);
+        uint8_t c = at(tellp());
         if (0xF0 == (0xF0 & c)) {
             type = 0x0F & c;
-            tag = at(i + 1);
+            tag = at(tellp() + 1);
             return 2;
         }
         else {
@@ -162,48 +190,69 @@ struct ReadBuffer : public std::string {
         }
     }
 
-    void skip(size_t n) { i += n; }
+    // 当前读取位置
+    inline size_t tellp() const { return i; }
 
-    int read(size_t offset, uint8_t& c) const
+    // 跳过字节
+    inline void skip(size_t n) { i += n; }
+
+    // 拿到当前读取的缓存地址
+    const char* peek(size_t offset) const { return data() + tellp() + offset; }
+
+    // 查看字节
+    bool peek(size_t offset, uint8_t& c) const
     {
-        c = at(offset);
-        return sizeof(c);
+        if (!checksz(offset + sizeof(c))) {
+            return false;
+        }
+        c = at(tellp() + offset);
+        return true;
+    };
+
+    // 读取一个无符号整数
+    bool peek(size_t offset, uint32_t& n) const
+    {
+        if (!checksz(offset + sizeof(n))) {
+            return false;
+        }
+        n = ntohl(*(const uint32_t*)(data() + tellp() + offset));
+        return true;
     }
 
-    int read(size_t offset, int8_t& c) const
+    // 读取整数
+    int read(size_t offset, uint8_t type, int64_t& n) const
     {
-        c = at(offset);
-        return sizeof(c);
-    }
-
-    int read(size_t offset, int16_t& n) const
-    {
-        n = ntohs(*(const int16_t*)(data() + offset));
-        return sizeof(n);
-    }
-
-    int read(size_t offset, uint16_t& n) const
-    {
-        n = ntohs(*(const uint16_t*)(data() + offset));
-        return sizeof(n);
-    }
-
-    int read(size_t offset, int32_t& n) const
-    {
-        n = ntohl(*(const int32_t*)(data() + offset));
-        return sizeof(n);
-    }
-
-    int read(size_t offset, uint32_t& n) const
-    {
-        n = ntohl(*(const uint32_t*)(data() + offset));
-        return sizeof(n);
-    }
-
-    int read(size_t offset, int64_t& n) const
-    {
-        n = be64toh(*(const int64_t*)(data() + offset));
-        return sizeof(n);
+        switch (type) {
+            case TarsHeadeZeroTag: {
+                n = 0;
+                return 0;
+            }
+            case TarsHeadeChar: {
+                if (checksz(offset + sizeof(int8_t))) {
+                    n = (int8_t)at(tellp() + offset);
+                    return sizeof(int8_t);
+                }
+            } break;
+            case TarsHeadeShort: {
+                if (checksz(offset + sizeof(int16_t))) {
+                    n = ntohs(*(const int16_t*)(data() + tellp() + offset));
+                    return sizeof(int16_t);
+                }
+            } break;
+            case TarsHeadeInt32: {
+                if (checksz(offset + sizeof(int32_t))) {
+                    n = ntohl(*(const int32_t*)(data() + tellp() + offset));
+                    return sizeof(int32_t);
+                }
+            } break;
+            case TarsHeadeInt64: {
+                if (checksz(offset + sizeof(int32_t))) {
+                    n = be64toh(*(const int64_t*)(data() + tellp() + offset));
+                    return sizeof(int64_t);
+                }
+            } break;
+        }
+        return -1;
     }
 };
 
@@ -466,25 +515,20 @@ int Context::encodeMap(lua_State* L, WriteBuffer& buffer, uint16_t tag, int type
     return 0;
 }
 
-// 检测大小
-#define _CHECK_SZ(Size, Tag)                                                                                   \
-    if (!buffer.checksz((Size))) {                                                                             \
-        luaL_error(L, "读取字段%d时报错，字节流被截断了，还需要%d，全部长度%d", (Tag), (Size), buffer.size()); \
-    }
-
 // 读取一个字段
 int Context::read(lua_State* L, ReadBuffer& buffer, int type1, int tag, int def)
 {
     // 1. 从当前的位置开始读取字节流，直到读取到最后一个不大于当前字段序号的段落开始
     // 2. 如果读取到一个段落开始，且这个段落的序号小于当前字段的序号，则表明字节流序列错误，应该中断并报错
-    // 3. 如果正确地读取到段落，根据当前字段类型使用解析方式读取就可以
+    // 3. 如果正确地读取到段落，根据当前字段类型选择解析方式读取就可以
     // 4. 如果没有读取到段落，则使用字段的默认数值
     // 5. 读取了字段后，应该移动字节流的读取位置到下一个字段
 
-    uint8_t tag0, type0;
-    size_t n = 0;
+    uint8_t type0;
+    size_t offset = 0;
     if (buffer.checksz(2)) {
-        n += buffer.header(tag0, type0);
+        uint8_t tag0;
+        offset += buffer.header(tag0, type0);
         if (tag < tag0) {
             luaL_error(L, "字节序列错误，尝试读取字段%d，实际读取到序号%d", tag, tag0);
         }
@@ -492,20 +536,22 @@ int Context::read(lua_State* L, ReadBuffer& buffer, int type1, int tag, int def)
     switch (type1) {
         case LTARS_BOOL: {
             uint8_t b = 0;
-            if (n < 1) {
+            if (offset < 1) {
                 // 使用默认值
                 b = def;
             }
-            else if (TarsHeadeZeroTag == tag0) {
+            else if (TarsHeadeZeroTag == type0) {
                 // 0值
                 b = 0;
             }
-            else if (TarsHeadeChar == tag0) {
-                _CHECK_SZ(n + sizeof(b), tag);
-                n += buffer.read(n, b);
+            else if (TarsHeadeChar == type0) {
+                if (!buffer.peek(offset, b)) {
+                    luaL_error(L, "读取字段%d失败，字节流已结束，位置%d，长度%d", tag, buffer.tellp(), buffer.size());
+                }
+                offset += sizeof(b);
             }
             else {
-                luaL_error(L, "读取字段%d失败，需要一个布尔，实际类型是%d", tag, type0);
+                luaL_error(L, "读取字段%d失败，需要一个布尔，实际类型是%s", tag, _tars_type_name(type0));
             }
             if (b > 1) {
                 luaL_error(L, "读取字段%d失败，不是一个正确的布尔值%d", tag, b);
@@ -516,28 +562,88 @@ int Context::read(lua_State* L, ReadBuffer& buffer, int type1, int tag, int def)
         case LTARS_INT16:
         case LTARS_INT32:
         case LTARS_INT64: {
-            int8_t b = 0;
-            if (n < 1) {
-                // 使用默认值
-                b = def;
-            }
-            else if (TarsHeadeZeroTag == tag0) {
-                // 0值
-                b = 0;
-            }
-            else if (TarsHeadeChar == tag0) {
-                _CHECK_SZ(n + sizeof(b), tag);
-                n += buffer.read(n, b);
+            int64_t n = 0;
+            if (offset < 1) {
+                n = def;
             }
             else {
-                luaL_error(L, "读取字段%d失败，需要一个布尔，实际类型是%d", tag, type0);
+                int sz = buffer.read(offset, type0, n);
+                if (sz < 0) {
+                    luaL_error(L, "读取字段%d失败，需要一个整数，实际类型是%s，剩余字节数%d", tag, _tars_type_name(type0),
+                               (buffer.size() - offset));
+                }
+                else {
+                    if ((LTARS_INT8 == type1 && sz > sizeof(int8_t)) || (LTARS_INT16 == type1 > sz <= sizeof(int16_t)) ||
+                        (LTARS_INT32 == type1 && sz > sizeof(int32_t))) {
+                        luaL_error(L, "读取字段%d失败，整数溢出了，实际值为%ld", tag, n);
+                    }
+                    offset += sz;
+                }
             }
-            if (b > 1) {
-                luaL_error(L, "读取字段%d失败，不是一个正确的8位整数%d", tag, b);
+            lua_pushinteger(L, n);
+        } break;
+        case LTARS_UINT8:
+        case LTARS_UINT16:
+        case LTARS_UINT32:
+        case LTARS_UINT64: {
+            int64_t n = 0;
+            if (offset < 1) {
+                n = def;
             }
-            lua_pushinteger(L, b);
+            else {
+                int sz = buffer.read(offset, type0, n);
+                if (sz < 0) {
+                    luaL_error(L, "读取字段%d失败，字节流已结束，位置%d，长度%d", tag, buffer.tellp(), buffer.size());
+                }
+                else {
+                    if (n < 0) {
+                        luaL_error(L, "读取字段%d失败，需要一个无符号整数，实际是一个负数%ld", n);
+                    }
+                    offset += sz;
+                }
+            }
+            lua_pushinteger(L, n);
+        } break;
+        case LTARS_STRING: {
+            if (offset < 1) {
+                if (0 == def) {
+                    lua_pushlstring(L, "", 0);
+                }
+                else {
+                    // 从元表中查询字符串默认值
+                    lua_rawgeti(L, 4, def);
+                }
+            }
+            size_t len = 0;
+            if (TarsHeadeString1 == type0) {
+                uint8_t n = 0;
+                if (!buffer.peek(offset, n)) {
+                    luaL_error(L, "读取字段%d失败，字节流已结束，位置%d，长度%d", tag, buffer.tellp(), buffer.size());
+                }
+                len = n;
+                offset += sizeof(n);
+            }
+            else if (TarsHeadeString4 == type0) {
+                uint32_t n = 0;
+                if (!buffer.peek(offset, n)) {
+                    luaL_error(L, "读取字段%d失败，字节流已结束，位置%d，长度%d", tag, buffer.tellp(), buffer.size());
+                }
+                len = n;
+                offset += sizeof(n);
+            }
+            else {
+                luaL_error(L, "读取字段%d失败，需要一个布尔，实际类型是%s", tag, _tars_type_name(type0));
+            }
+            if (!buffer.checksz(offset + len)) {
+                luaL_error(L, "读取字段%d失败，字节流已结束，位置%d，长度%d，将读取%d字节", tag, buffer.tellp(), buffer.size(),
+                           len);
+            }
+            // 压入字符串
+            lua_pushlstring(L, buffer.peek(offset), len);
+            offset += len;
         } break;
     }
+    buffer.skip(offset);
     return 0;
 }
 
@@ -570,9 +676,11 @@ int Context::decodeStruct(lua_State* L, ReadBuffer& buffer, uint16_t row, uint16
 // 上下文的大小
 #define GET_ENV_SIZE(n) ((n) * sizeof(Field) + sizeof(Context))
 
-// clang-format off
-#define LTARS_ENUM(Type) {#Type, LTARS_##Type}
-// clang-format on
+// 枚举和其名称的对
+#define LTARS_ENUM(Type)    \
+    {                       \
+#Type, LTARS_##Type \
+    }
 
 // lua函数：创建tars上下文
 static int context_create(lua_State* L)
