@@ -1,9 +1,12 @@
-all: run
+all: tars.so
 
-run: main.cpp
-	gcc $^ -o $@  -L/usr/local/lib -llua -std=c++11 -lstdc++ -lm -ldl -g
+tars.so: libtars.c
+	g++ $^ -o $@ -fPIC -shared -g
 
-r: run
-	./$<
+r: all
+	lua run.lua
 
-.PHONE: all r
+clean:
+	rm tars.so
+
+.PHONE: all r clean
