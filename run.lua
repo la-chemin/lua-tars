@@ -2,20 +2,20 @@ local tars = require "tars_wrapper"
 
 local text = [[
 struct TBook {
-    0 required int iId;
+    0 require int iId;
     1 optional string sName;
     2 optional long iWhen;
 };
 
 struct TBook1 {
-    0 required int iId;
+    0 require int iId;
     1 optional string sName;
     2 optional long iWhen;
     3 optional string sComment;
 };
 
 struct TBook2 {
-    0 required int iId;
+    0 require int iId;
     1 optional string sName;
     2 optional long iWhen;
     3 optional TBook stBook1;

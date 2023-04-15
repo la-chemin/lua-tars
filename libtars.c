@@ -617,7 +617,7 @@ int encodeMap(  // 编码字典
         // printf("编码字典的value %s:%s\n", lua_tostring(L, -1), lua_typename(L, lua_type(L, -1)));
         if (value_type < LUATARS_TYPE_MAX) {
             // printf("编码字典的value写入基础值\n");
-            write_basic(L, B, 0, value_type, true, def_zero);
+            write_basic(L, B, 1, value_type, true, def_zero);
         }
         else {
             // printf("编码字典的value写入结构体 %d\n", value_type);
