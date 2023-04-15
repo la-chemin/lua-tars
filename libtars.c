@@ -99,6 +99,9 @@ static const char* _tars_type_name(uint8_t type, size_t* len)
 // 宏函数封装一下
 #define tars_type_name(Type) _tars_type_name((Type), NULL)
 
+// 列表、字典元表的id
+static const void *list_mt = &list_mt, *map_mt = &map_mt;
+
 static inline void write_header(  // 写入头部
     luaL_Buffer* B,
     uint8_t tag,
@@ -618,7 +621,7 @@ int encodeMap(  // 编码字典
         }
         else {
             // printf("编码字典的value写入结构体 %d\n", value_type);
-            encodeStruct(context, L, B, value_type, 0, true, false);
+            encodeStruct(context, L, B, value_type, 1, true, false);
         }
         lua_pop(L, 1);
     }
@@ -665,7 +668,6 @@ int encodeList(  // 编码数组
         else {
             encodeStruct(context, L, B, value_type, 0, true, false);
         }
-        // printf("写入第%d个元素:%s\n", i, lua_tostring(L, -1));
         lua_pop(L, 1);
     }
     return 1;
@@ -834,7 +836,7 @@ static bool readHeader(  // 读取字段头部，返回是否缺失字段
     }
     // printf("read (tag = %d, type = %s), offset = (%ld/%ld), n = %d\n", header->tag, tars_type_name(header->type),
     // buffer->offset,
-    //     buffer->n, n);
+    //        buffer->n, n);
     if (TarsHeadeStructEnd == header->type) {
         if (-1 == tag) {
             // 在跳过模式下，读取到结构体结束标志位，会前移游标
@@ -1122,6 +1124,7 @@ int decodeList(  // 解码数组
     }
     // printf("读取数组，长度为%d\n", len);
     lua_createtable(L, len, 0);
+    lua_rawgetp(L, LUA_REGISTRYINDEX, list_mt), lua_setmetatable(L, -2);
     for (int i = 0; i < len;) {
         // 读取数组元素，先读取头部
         struct tars_header header;
@@ -1165,10 +1168,9 @@ int decodeMap(  // 解码字典
             luaL_error(L, "[C] %s %d: map got no length", __FUNCTION__, __LINE__);
         }
         len = read_int64(L, buffer, def_zero, header, false);
-        // printf("读取字典的长度 长度的类型:%s\n", tars_type_name(header.type));
     }
-    // printf("解码字典，长度 = %d，是否缺失字段 = %d\n", (int)len, missing);
     lua_createtable(L, 0, len);
+    lua_rawgetp(L, LUA_REGISTRYINDEX, map_mt), lua_setmetatable(L, -2);
     for (int i = 0; i < len; ++i) {
         // key只支持基础类型
         struct tars_header header;
@@ -1177,8 +1179,8 @@ int decodeMap(  // 解码字典
         }
         read_basic(L, buffer, key_type, def_zero, header, false);
         // value只支持基础类型和复合类型，不支持嵌套类型
-        if (readHeader(L, buffer, &header, 0)) {
-            luaL_error(L, "[C] %s %d: map got no value", __FUNCTION__, __LINE__);
+        if (readHeader(L, buffer, &header, 1)) {
+            luaL_error(L, "[C] %s %d: map got no value, (%d/%d)", __FUNCTION__, __LINE__, i, len);
         }
         if (value_type < LUATARS_TYPE_MAX) {
             read_basic(L, buffer, value_type, def_zero, header, false);
@@ -1209,9 +1211,7 @@ int skipField(  // 跳过若干字段
     struct read_buffer* buffer,
     uint16_t n)
 {
-    // printf("跳过字段\n");
     for (struct tars_header header; n != 0 && !readHeader(L, buffer, &header, -1); --n) {
-        // printf("跳过字段 tag = %d type = %s\n", header.tag, tars_type_name(header.type));
         switch (header.type) {
             case TarsHeadeZeroTag: {
                 // skip nothing
@@ -1314,7 +1314,6 @@ static int luatars_decodeMap(lua_State* L)
     struct read_buffer buffer;
     buffer.n = n, buffer.offset = 0, buffer.data = s;
 
-    // TODO: 读取头部
     decodeMap(context, L, &buffer, key_type, value_type, false);
 
     return 1;
@@ -1354,7 +1353,7 @@ static int luatars_dump(lua_State* L)
         lua_rawgeti(L, 2, i);
         struct tars_field* field = &context->fields[i];
         int sz = snprintf(b, sizeof b, "[%d]:%8s\t%s\t%d\t%d\t%d\n", field->tag, lua_tostring(L, -1),
-                          field->forced ? "required" : "optional", field->type1, field->type2, field->type3);
+                          field->forced ? "require" : "optional", field->type1, field->type2, field->type3);
         lua_pop(L, 1);
         luaL_addlstring(&B, b, sz);
     }
@@ -1402,5 +1401,12 @@ EXPORT int luaopen_tars(lua_State* L)
     set_luatars_enum(L, LIST);
     set_luatars_enum(L, TYPE_MAX);
 
+    lua_newtable(L), lua_rawsetp(L, LUA_REGISTRYINDEX, list_mt);
+    lua_newtable(L), lua_rawsetp(L, LUA_REGISTRYINDEX, map_mt);
+
+    lua_rawgetp(L, LUA_REGISTRYINDEX, list_mt), lua_setfield(L, -2, "list_mt");
+    lua_rawgetp(L, LUA_REGISTRYINDEX, map_mt), lua_setfield(L, -2, "map_mt");
+
     return 1;
 }
+

@@ -77,12 +77,12 @@ function tars.parse(sTars)
                 end
             else
                 -- 字段是否强制写
-                if forced == "required" then
+                if forced == "require" then
                     forced = true
                 elseif forced == "optional" then
                     forced = false
                 else
-                    error(("invalid forced:'%s', line:'%s'"):format(forced, line))
+                    error(("invalid forced:'%s', line:'%s', %s"):format(forced, line, structName))
                 end
                 -- 字段类型和名称部分
                 declare = declare:gsub("%s+", " "):gsub("unsigned ", "u_")
@@ -121,9 +121,9 @@ function tars.parse(sTars)
                     type2, type3 = nil, nil
                 end
                 if default and default ~= "" then
-                    if default == "false" then
+                    if default:match("false") then
                         default = false
-                    elseif default == "true" then
+                    elseif default:match("true") then
                         default = true
                     else
                         local s = default:match('"[^"]*"')
@@ -155,6 +155,12 @@ function tars.parse(sTars)
     end
     -- 创建上下文
     return tars.createContext(fields, mt)
+end
+
+-- sFile: 输入的协议文件
+function tars.open(sFile)
+    local f = assert(io.open(sFile, "r"))
+    return tars.parse(f:read("*a"))
 end
 
 -- 编码结构体
@@ -207,6 +213,60 @@ function tars:decodeMap(key_type, value_type, data)
     else
         return tars_decodeMap(self, key_type, getmetatable(self)[value_type], data)
     end
+end
+
+local list_mt = tars.list_mt
+local map_mt = tars.map_mt
+local tostring = tostring
+
+local function addValue(buf, s)
+    if type(s) == "string" then
+        table.insert(buf, '"')
+        table.insert(buf, (s:gsub('"', '\\"')))
+        table.insert(buf, '"')
+    else
+        table.insert(buf, tostring(s))
+    end
+end
+
+local function toJson(obj, buf)
+    if getmetatable(obj) == list_mt then
+        table.insert(buf, '[')
+        for i, v in ipairs(obj) do
+            if i > 1 then
+                table.insert(buf, ', ')
+            end
+            if type(v) == "table" then
+                toJson(v, buf)
+            else
+                addValue(buf, v)
+            end
+        end
+        table.insert(buf, ']')
+    else
+        local b = true
+        table.insert(buf, '{')
+        for k, v in pairs(obj) do
+            if not b then
+                table.insert(buf, ', ')
+            else
+                b = false
+            end
+            addValue(buf, k)
+            table.insert(buf, ': ')
+            if type(v) == "table" then
+                toJson(v, buf)
+            else
+                addValue(buf, v)
+            end
+        end
+        table.insert(buf, '}')
+    end
+    return buf
+end
+
+function tars.toJson(obj)
+    return table.concat(toJson(obj, {}))
 end
 
 return tars
