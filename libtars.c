@@ -46,7 +46,7 @@
 #define _MAX_STR_LEN (100 * 1024 * 1024)
 
 // 默认值联合体
-union default_value {
+static union default_value {
     lua_Integer integer;
     lua_Number number;
 } def_zero = {0};
@@ -426,7 +426,7 @@ int luatars_createContext(lua_State* L)
     memset(context, 0, sz);
     // 总共的字段数量
     context->n = n;
-    for (int i = 0; i < context->n;) {
+    for (size_t i = 0; i < context->n;) {
         struct tars_field* field = &context->fields[i];
         i += 1;
         int t = lua_rawgeti(L, 1, i);
@@ -525,7 +525,7 @@ int encodeStruct(  // 编码结构体函数实现，使用栈顶的元素
             luaL_error(L, "field name not found for index = %d", field - context->fields);
         }
         // 再用表名称从之前栈顶的表中查询成员
-        // printf("写入字段tag = %d, name = %s, index = %d\n", field->tag, lua_tostring(L, -1), field - context->fields);
+        // printf("写入字段tag = %d, name = %s, index = %d\n", field->tag, lua_tostring(L, -1), (int)(field - context->fields));
         lua_rawget(L, -2);
         if (LUATARS_MAP == field->type1) {
             // 写入字典
@@ -576,6 +576,7 @@ int encodeMap(  // 编码字典
             lua_pop(L, 1), lua_newtable(L);
         }
         else {
+            // printf("字典不存在\n");
             return 0;
         }
     }
@@ -597,18 +598,26 @@ int encodeMap(  // 编码字典
         return 0;  // 不用强制写空字典
     }
     if (!noWrap) {
+        // printf("写入字典头部 tag = %d，长度 = %d\n", tag, (int)n);
         write_header(B, tag, TarsHeadeMap);
     }
+    // 写入字典的长度
     write_int32(B, 0, n);
 
     lua_pushnil(L);
     while (lua_next(L, -2)) {
         // 编码key
-        lua_pushvalue(L, -2), write_basic(L, B, 0, key_type, true, def_zero), lua_pop(L, 1);
+        lua_pushvalue(L, -2);
+        // printf("编码字典的key %s\n", lua_tostring(L, -1));
+        write_basic(L, B, 0, key_type, true, def_zero);
+        lua_pop(L, 1);
+        // printf("编码字典的value %s:%s\n", lua_tostring(L, -1), lua_typename(L, lua_type(L, -1)));
         if (value_type < LUATARS_TYPE_MAX) {
+            // printf("编码字典的value写入基础值\n");
             write_basic(L, B, 0, value_type, true, def_zero);
         }
         else {
+            // printf("编码字典的value写入结构体 %d\n", value_type);
             encodeStruct(context, L, B, value_type, 0, true, false);
         }
         lua_pop(L, 1);
@@ -643,11 +652,11 @@ int encodeList(  // 编码数组
         return 0;
     }
     if (!noWrap) {
-        // TODO: vector<cahr> 写入SimpleList
+        // TODO: vector<char> 写入SimpleList
         write_header(B, tag, TarsHeadeList);
     }
     write_int32(B, 0, n);  // 写入长度
-    for (size_t i = 0; i < n;) {
+    for (int i = 0; i < n;) {
         ++i;
         lua_rawgeti(L, -1, i);
         if (value_type < LUATARS_TYPE_MAX) {
@@ -814,7 +823,7 @@ static bool readHeader(  // 读取字段头部，返回是否缺失字段
     lua_State* L,
     struct read_buffer* buffer,
     struct tars_header* header,
-    uint8_t tag)
+    int16_t tag)
 {
     int n = read_header(buffer, header);
     if (n < 0) {
@@ -823,19 +832,25 @@ static bool readHeader(  // 读取字段头部，返回是否缺失字段
     if (0 == n) {
         return true;
     }
-    // printf("read (tag = %d, type = %s), offset = (%d/%d), n = %d\n", header->tag, tars_type_name(header->type), buffer->offset,
-    // buffer->n, n);
+    // printf("read (tag = %d, type = %s), offset = (%ld/%ld), n = %d\n", header->tag, tars_type_name(header->type),
+    // buffer->offset,
+    //     buffer->n, n);
     if (TarsHeadeStructEnd == header->type) {
-        skip_buffer(buffer, n);
+        if (-1 == tag) {
+            // 在跳过模式下，读取到结构体结束标志位，会前移游标
+            skip_buffer(buffer, n);
+        }
         return true;  // 读取到结构体结束
     }
-    if (header->tag > tag) {
-        return true;  // 读取到了下一个字段
-    }
-    if (header->tag < tag) {
-        // 读取到了上一个字段，这是不应该的，报错
-        luaL_error(L, "[C] %s %d: discrete field, require tag = %d, got %d type = '%s'", __FUNCTION__, __LINE__, tag, header->tag,
-                   tars_type_name(header->type));
+    if (-1 != tag) {
+        if (header->tag > tag) {
+            return true;  // 读取到了下一个字段
+        }
+        if (header->tag < tag) {
+            // 读取到了上一个字段，这是不应该的，报错
+            luaL_error(L, "[C] %s %d: discrete field, require tag = %d, got %d type = '%s'", __FUNCTION__, __LINE__, tag,
+                       header->tag, tars_type_name(header->type));
+        }
     }
     // 读取到了字段
     skip_buffer(buffer, n);
@@ -1003,6 +1018,11 @@ static int read_basic(  // 读取基础类型
     return 0;
 }
 
+static int skipField(  // 跳过若干字段
+    lua_State* L,
+    struct read_buffer* buffer,
+    uint16_t n);
+
 int decodeStruct(  // 解码结构体
     struct tars_context* context,
     lua_State* L,
@@ -1027,6 +1047,7 @@ int decodeStruct(  // 解码结构体
         if (LUA_TSTRING != t) {
             luaL_error(L, "field name not found for id = %d", id);
         }
+        // printf("解析字段 %d %s\n", (int)(field - context->fields), lua_tostring(L, -1));
         bool field_missing = missing;
         // 先读取字段头部
         struct tars_header header;
@@ -1063,6 +1084,8 @@ int decodeStruct(  // 解码结构体
             }
             decodeStruct(context, L, buffer, field->type1, field_missing);
         }
+        // printf("解析字段%d '%s' = %s %s\n", (int)(field - context->fields), lua_tostring(L, -2), lua_tostring(L, -1),
+        //     lua_typename(L, lua_type(L, -1)));
         lua_rawset(L, -3);
         ++field;
         if ((size_t)(field - context->fields) >= context->n || field->tag == 0) {
@@ -1070,7 +1093,8 @@ int decodeStruct(  // 解码结构体
             break;
         }
     }
-    // TODO: skip to struct end
+    // 跳过结构体尾部多余的字段：使用旧协议解析新协议结构
+    skipField(L, buffer, 255);
 
     return 1;
 }
@@ -1141,7 +1165,9 @@ int decodeMap(  // 解码字典
             luaL_error(L, "[C] %s %d: map got no length", __FUNCTION__, __LINE__);
         }
         len = read_int64(L, buffer, def_zero, header, false);
+        // printf("读取字典的长度 长度的类型:%s\n", tars_type_name(header.type));
     }
+    // printf("解码字典，长度 = %d，是否缺失字段 = %d\n", (int)len, missing);
     lua_createtable(L, 0, len);
     for (int i = 0; i < len; ++i) {
         // key只支持基础类型
@@ -1165,6 +1191,91 @@ int decodeMap(  // 解码字典
             decodeStruct(context, L, buffer, value_type, false);
         }
         lua_rawset(L, -3);
+    }
+    return 0;
+}
+
+#define CHECK_SIZE(L, Buffer, N)                                                \
+    if (!has_size(Buffer, N)) {                                                 \
+        luaL_error(L, "[C] %s %d: malformaled stream", __FUNCTION__, __LINE__); \
+    }
+
+#define SKIP_SIZE(L, Buffer, N) \
+    CHECK_SIZE(L, Buffer, N);   \
+    skip_buffer(Buffer, N);
+
+int skipField(  // 跳过若干字段
+    lua_State* L,
+    struct read_buffer* buffer,
+    uint16_t n)
+{
+    // printf("跳过字段\n");
+    for (struct tars_header header; n != 0 && !readHeader(L, buffer, &header, -1); --n) {
+        // printf("跳过字段 tag = %d type = %s\n", header.tag, tars_type_name(header.type));
+        switch (header.type) {
+            case TarsHeadeZeroTag: {
+                // skip nothing
+            } break;
+            case TarsHeadeChar: {
+                SKIP_SIZE(L, buffer, sizeof(int8_t));
+            } break;
+            case TarsHeadeShort: {
+                SKIP_SIZE(L, buffer, sizeof(int16_t));
+            } break;
+            case TarsHeadeInt32: {
+                SKIP_SIZE(L, buffer, sizeof(int32_t));
+            } break;
+            case TarsHeadeInt64: {
+                SKIP_SIZE(L, buffer, sizeof(int64_t));
+            } break;
+            case TarsHeadeFloat: {
+                SKIP_SIZE(L, buffer, sizeof(float));
+            } break;
+            case TarsHeadeDouble: {
+                SKIP_SIZE(L, buffer, sizeof(double));
+            } break;
+            case TarsHeadeString1: {
+                CHECK_SIZE(L, buffer, sizeof(uint8_t));
+                uint8_t sz = *(const uint8_t*)read_buffer(buffer, 0);
+                SKIP_SIZE(L, buffer, sz + sizeof(uint8_t));
+            } break;
+            case TarsHeadeString4: {
+                CHECK_SIZE(L, buffer, sizeof(uint32_t));
+                uint32_t sz = *(const uint32_t*)read_buffer(buffer, 0);
+                SKIP_SIZE(L, buffer, sz + sizeof(uint32_t));
+            } break;
+            case TarsHeadeMap: {
+                struct tars_header sz_header;
+                if (readHeader(L, buffer, &sz_header, 0)) {
+                    luaL_error(L, "[C] %s %d: map got no length", __FUNCTION__, __LINE__);
+                }
+                int64_t len = read_int64(L, buffer, def_zero, sz_header, false);
+                for (; len > 0; --len) {
+                    skipField(L, buffer, 1);
+                    skipField(L, buffer, 1);
+                }
+            } break;
+            case TarsHeadeList: {
+                struct tars_header sz_header;
+                if (readHeader(L, buffer, &sz_header, 0)) {
+                    luaL_error(L, "[C] %s %d: list got no length", __FUNCTION__, __LINE__);
+                }
+                int64_t len = read_int64(L, buffer, def_zero, sz_header, false);
+                for (; len > 0; --len) {
+                    skipField(L, buffer, 1);
+                }
+            } break;
+            case TarsHeadeStructBegin: {
+                skipField(L, buffer, 256);  // 跳过一个完整的结构体
+            } break;
+            case TarsHeadeSimpleList: {
+                luaL_error(L, "[C] %s %d: TODO 'TarsHeadeSimpleList' not support yet", __FUNCTION__, __LINE__);
+            } break;
+            default: {
+                luaL_error(L, "[C] %s %d: can not skip type = %d '%s'", __FUNCTION__, __LINE__, header.type,
+                           tars_type_name(header.type));
+            }
+        }
     }
     return 0;
 }
@@ -1223,7 +1334,6 @@ static int luatars_decodeList(lua_State* L)
     struct read_buffer buffer;
     buffer.n = n, buffer.offset = 0, buffer.data = s;
 
-    // TODO: 先读取头部
     decodeList(context, L, &buffer, value_type, false);
 
     return 1;
