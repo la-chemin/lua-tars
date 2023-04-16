@@ -41,39 +41,23 @@ struct TStudent1 {
 };
 ]]
 
-local function escape(v)
-    if type(v) == "string" then
-        return ('"%s"'):format(v)
-    else
-        return v
-    end
-end
-
-local function dump(v)
-    local b = {}
-    for key, val in pairs(v) do
-        table.insert(b, ("[%s] = %s"):format(escape(key), escape(val)))
-    end
-    return table.concat(b, ", ")
-end
-
 local context = tars.parse(text);
 
--- print(context:dump())
+-- print(context:tars.toJson())
 
 local s1 = context:encodeStruct("TBook", {
     iId = nil,
     sName = "hello, world",
     iWhen = nil})
-print("测试普通结构体编码和解码", dump(context:decodeStruct("TBook", s1)))
+print("测试普通结构体编码和解码", tars.toJson(context:decodeStruct("TBook", s1)))
 
 
 local s2 = context:encodeList(tars.INT8, {1,0,0,0,0,1,2,3,4,5,6})
-print("测试数字数组的编解码", dump(context:decodeList(tars.INT8, s2)))
+print("测试数字数组的编解码", tars.toJson(context:decodeList(tars.INT8, s2)))
 
 
 local s3 = context:encodeMap(tars.INT8, tars.STRING, {"world", "hello", "say i love you"})
-print("测试普通字典的编解码", dump(context:decodeMap(tars.INT8, tars.STRING, s3)))
+print("测试普通字典的编解码", tars.toJson(context:decodeMap(tars.INT8, tars.STRING, s3)))
 
 
 local s4 = context:encodeStruct("TStudent", {
@@ -86,14 +70,14 @@ local s4 = context:encodeStruct("TStudent", {
     },
 })
 local res = context:decodeStruct("TStudent", s4)
-print("测试复合结构体编解码", dump(res), dump(res.mBook[3]))
+print("测试复合结构体编解码", tars.toJson(res), tars.toJson(res.mBook[3]))
 
 
 local s5  = context:encodeStruct("TBook1", {
     iId = 274, sName = "绿箭口香糖", iWhen = 26492, sComment = "绿色生活",
 })
 
-print("测试字段协议兼容", dump(context:decodeStruct("TBook", s5)))
+print("测试字段协议兼容", tars.toJson(context:decodeStruct("TBook", s5)))
 
 
 local s6 = context:encodeStruct("TStudent", {
@@ -106,7 +90,7 @@ local s6 = context:encodeStruct("TStudent", {
     iVersion = 9527,
 })
 
-print("测试嵌套结构体协议兼容", dump(context:decodeStruct("TStudent1", s6)))
+print("测试嵌套结构体协议兼容", tars.toJson(context:decodeStruct("TStudent1", s6)))
 
 
 local s7 = context:encodeStruct("TBook2", {
@@ -116,4 +100,4 @@ local s7 = context:encodeStruct("TBook2", {
     mExtra1 = {[232] = 732, [201] = 125},
     vExtra2 = {"维生素C片", "适应症", "用于预防坏血症"},
 })
-print("测试结构体协议兼容", dump(context:decodeStruct("TBook", s7)))
+print("测试结构体协议兼容", tars.toJson(context:decodeStruct("TBook", s7)))

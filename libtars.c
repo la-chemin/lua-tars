@@ -1242,6 +1242,7 @@ int skipField(  // 跳过若干字段
             case TarsHeadeString4: {
                 CHECK_SIZE(L, buffer, sizeof(uint32_t));
                 uint32_t sz = *(const uint32_t*)read_buffer(buffer, 0);
+                sz = ntohl(sz);
                 SKIP_SIZE(L, buffer, sz + sizeof(uint32_t));
             } break;
             case TarsHeadeMap: {
