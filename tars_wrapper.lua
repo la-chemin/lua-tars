@@ -1,6 +1,8 @@
 local tars = require "tars"
 
 local type = type
+local getmetatable = getmetatable
+local push = table.insert
 
 -- 基础类型的枚举
 local __basic_types = {
@@ -37,7 +39,7 @@ local __map_keys = {
 local function str_expand(s, pattern)
     local b = {}
     for p in s:gmatch(pattern) do
-        table.insert(b, p)
+        push(b, p)
     end
     return b
 end
@@ -122,9 +124,9 @@ function tars.parse(sTars)
                 end
                 if default and default ~= "" then
                     if default:match("false") then
-                        default = false
+                        default = 0
                     elseif default:match("true") then
-                        default = true
+                        default = 1
                     else
                         local s = default:match('"[^"]*"')
                         if s then
@@ -141,7 +143,7 @@ function tars.parse(sTars)
                 -- print(tag, name, forced, type1, type2, type3, default)
                 -- 记录结构体字段的名称
                 mt[#fields] = name
-                table.insert(fields, {
+                push(fields, {
                     tag = tag,
                     name = name,
                     forced = forced,
@@ -215,26 +217,36 @@ function tars:decodeMap(key_type, value_type, data)
     end
 end
 
+-- 解码base64结构体
+function tars:decode(name, data)
+    return self:decodeStruct(name, tars.decodeB64(data))
+end
+
+-- 编码结构体成base64
+function tars:encode(name, obj)
+    return tars.encodeB64(self:encodeStruct(name, obj))
+end
+
 local list_mt = tars.list_mt
 local map_mt = tars.map_mt
 local tostring = tostring
 
 local function addValue(buf, s)
     if type(s) == "string" then
-        table.insert(buf, '"')
-        table.insert(buf, (s:gsub('"', '\\"')))
-        table.insert(buf, '"')
+        push(buf, '"')
+        push(buf, (s:gsub('"', '\\"')))
+        push(buf, '"')
     else
-        table.insert(buf, tostring(s))
+        push(buf, tostring(s))
     end
 end
 
 local function toJson(obj, buf)
     if getmetatable(obj) == list_mt then
-        table.insert(buf, '[')
+        push(buf, '[')
         for i, v in ipairs(obj) do
             if i > 1 then
-                table.insert(buf, ', ')
+                push(buf, ', ')
             end
             if type(v) == "table" then
                 toJson(v, buf)
@@ -242,31 +254,50 @@ local function toJson(obj, buf)
                 addValue(buf, v)
             end
         end
-        table.insert(buf, ']')
+        push(buf, ']')
     else
         local b = true
-        table.insert(buf, '{')
+        push(buf, '{')
         for k, v in pairs(obj) do
             if not b then
-                table.insert(buf, ', ')
+                push(buf, ', ')
             else
                 b = false
             end
             addValue(buf, k)
-            table.insert(buf, ': ')
+            push(buf, ': ')
             if type(v) == "table" then
                 toJson(v, buf)
             else
                 addValue(buf, v)
             end
         end
-        table.insert(buf, '}')
+        push(buf, '}')
     end
     return buf
 end
 
 function tars.toJson(obj)
     return table.concat(toJson(obj, {}))
+end
+
+-- 解析常量定义
+function tars.parseDefine(fileName)
+    local module = {}
+    for line in assert(io.open(fileName)):lines() do
+        line = line:gsub("%s+", " ")
+        local name, val = line:match 'const string (%S+) ?= ?"([^"]+)"'
+        if not name then
+            name, val = line:match 'const int (%S+) ?= ?(%d+)'
+            if val then
+                val = tonumber(val)
+            end
+        end
+        if name and val then
+            module[name] = val
+        end
+    end
+    return module
 end
 
 return tars

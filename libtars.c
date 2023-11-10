@@ -1,14 +1,14 @@
-#include "lauxlib.h"
+#include <lauxlib.h>
 #include "lua.h"
 #include "lualib.h"
 
 #include <stdbool.h>
 #include <string.h>
 
-#include <arpa/inet.h>
-#include <sys/types.h>
+#include "portable_endian.h"
 
 #include <inttypes.h>
+#include <sys/types.h>
 
 // 编码中使用的字段类型
 #define TarsHeadeChar 0
@@ -140,7 +140,7 @@ static inline void write_int16(  // 写入短整型
     }
     else {
         write_header(B, tag, TarsHeadeShort);
-        n = htons(n);
+        n = htobe16(n);
         luaL_addlstring(B, (const char*)&n, sizeof n);
     }
 }
@@ -155,7 +155,7 @@ static inline void write_int32(  // 写入整形
     }
     else {
         write_header(B, tag, TarsHeadeInt32);
-        n = htonl(n);
+        n = htobe32(n);
         luaL_addlstring(B, (const char*)&n, sizeof n);
     }
 }
@@ -184,7 +184,7 @@ static int write_basic(  // 写入基础类型
     union default_value def)
 {
     int ltype = lua_type(L, -1);
-    if (LUA_TNIL == ltype && !forced) {
+    if (LUA_TNIL == ltype && !forced && type != LUATARS_BOOL) {
         // printf("数据不存在，不要求强制写入，tag = %d\n", tag);
         return 0;  // 没有要求强制写
     }
@@ -358,7 +358,7 @@ static int write_basic(  // 写入基础类型
                 }
                 // 写入整形长度
                 write_header(B, tag, TarsHeadeString4);
-                uint32_t sz1 = htonl(sz);
+                uint32_t sz1 = htobe32(sz);
                 luaL_addlstring(B, (const char*)&sz1, sizeof sz1);
             }
             else {
@@ -651,7 +651,7 @@ int encodeList(  // 编码数组
         luaL_error(L, "%s require a table, got '%s'", __FUNCTION__, lua_typename(L, ltype));
     }
     int32_t n = lua_rawlen(L, -1);
-    if (n < 1 || !forced) {
+    if (n < 1 && !forced) {
         return 0;
     }
     if (!noWrap) {
@@ -885,7 +885,7 @@ static int64_t read_int64(  // 通用的读取整数值
             if (!has_size(buffer, sizeof(int16_t))) {
                 luaL_error(L, "no buffer int16_t");
             }
-            int16_t v = ntohs(*(const int16_t*)read_buffer(buffer, 0));
+            int16_t v = be16toh(*(const int16_t*)read_buffer(buffer, 0));
             skip_buffer(buffer, sizeof(int16_t));
             return v;
         }
@@ -893,7 +893,7 @@ static int64_t read_int64(  // 通用的读取整数值
             if (!has_size(buffer, sizeof(int32_t))) {
                 luaL_error(L, "no buffer int32_t");
             }
-            int32_t v = ntohl(*(const int32_t*)read_buffer(buffer, 0));
+            int32_t v = be32toh(*(const int32_t*)read_buffer(buffer, 0));
             skip_buffer(buffer, sizeof(int32_t));
             return v;
         }
@@ -992,7 +992,7 @@ static int read_basic(  // 读取基础类型
                     luaL_error(L, "[C] %s %d: truncated buffer", __FUNCTION__, __LINE__);
                 }
                 uint32_t sz = *(const uint32_t*)read_buffer(buffer, 0);
-                sz = ntohl(sz);
+                sz = be32toh(sz);
                 skip_buffer(buffer, sizeof(uint32_t));
                 if (!has_size(buffer, sz)) {
                     luaL_error(L, "[C] %s %d: no buffer, need %d", __FUNCTION__, __LINE__, sz);
@@ -1242,7 +1242,7 @@ int skipField(  // 跳过若干字段
             case TarsHeadeString4: {
                 CHECK_SIZE(L, buffer, sizeof(uint32_t));
                 uint32_t sz = *(const uint32_t*)read_buffer(buffer, 0);
-                sz = ntohl(sz);
+                sz = be32toh(sz);
                 SKIP_SIZE(L, buffer, sz + sizeof(uint32_t));
             } break;
             case TarsHeadeMap: {
@@ -1365,13 +1365,160 @@ static int luatars_dump(lua_State* L)
 // 设置
 #define set_luatars_enum(L, Type) lua_pushinteger(L, LUATARS_##Type), lua_setfield(L, -2, #Type);
 
-#ifdef __cplusplus
-#define EXPORT extern "C"
-#else
-#define EXPORT
-#endif
+static const unsigned char base64_table[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-EXPORT int luaopen_tars(lua_State* L)
+/**
+ * base64_encode - Base64 encode
+ * @src: Data to be encoded
+ * @len: Length of the data to be encoded
+ * @out_len: Pointer to output length variable, or %NULL if not used
+ * Returns: Allocated buffer of out_len bytes of encoded data,
+ * or %NULL on failure
+ *
+ * Caller is responsible for freeing the returned buffer. Returned buffer is
+ * nul terminated to make it easier to use as a C string. The nul terminator is
+ * not included in out_len.
+ */
+static int base64_encode(lua_State* L)
+{
+    size_t len = 0;
+    const unsigned char* src = luaL_checklstring(L, 1, &len);
+    size_t* out_len;
+    unsigned char *out, *pos;
+    const unsigned char *end, *in;
+    size_t olen;
+    int line_len;
+
+    olen = len * 4 / 3 + 4; /* 3-byte blocks to 4-byte */
+    olen += olen / 72;      /* line feeds */
+    olen++;                 /* nul termination */
+    if (olen < len) {
+        luaL_error(L, "base64 integer overflow");
+    }
+
+    luaL_Buffer B;
+    luaL_buffinitsize(L, &B, olen);
+
+    // 结束位置
+    end = src + len;
+    // 当前位置
+    in = src;
+    // 输出位置
+    pos = out;
+    line_len = 0;
+    while (end - in >= 3) {
+        luaL_addchar(&B, base64_table[in[0] >> 2]);
+        luaL_addchar(&B, base64_table[((in[0] & 0x03) << 4) | (in[1] >> 4)]);
+        luaL_addchar(&B, base64_table[((in[1] & 0x0f) << 2) | (in[2] >> 6)]);
+        luaL_addchar(&B, base64_table[in[2] & 0x3f]);
+        in += 3;
+        // line_len += 4;
+        // if (line_len >= 72) {
+        //     luaL_addchar(&B, '\n');
+        //     line_len = 0;
+        // }
+    }
+
+    if (end - in) {
+        luaL_addchar(&B, base64_table[in[0] >> 2]);
+        if (end - in == 1) {
+            luaL_addchar(&B, base64_table[(in[0] & 0x03) << 4]);
+            luaL_addchar(&B, '=');
+        }
+        else {
+            luaL_addchar(&B, base64_table[((in[0] & 0x03) << 4) | (in[1] >> 4)]);
+            luaL_addchar(&B, base64_table[(in[1] & 0x0f) << 2]);
+        }
+        luaL_addchar(&B, '=');
+        line_len += 4;
+    }
+
+    // if (line_len) {
+    //     luaL_addchar(&B, '\n');
+    // }
+
+    luaL_pushresult(&B);
+
+    return 1;
+}
+
+/**
+ * base64_decode - Base64 decode
+ * @src: Data to be decoded
+ * @len: Length of the data to be decoded
+ * @out_len: Pointer to output length variable
+ * Returns: Allocated buffer of out_len bytes of decoded data,
+ * or %NULL on failure
+ *
+ * Caller is responsible for freeing the returned buffer.
+ */
+static int base64_decode(lua_State* L)
+{
+    size_t len = 0;
+    const unsigned char* src = luaL_checklstring(L, 1, &len);
+    unsigned char dtable[256], *out, *pos, block[4], tmp;
+    size_t i, count, olen;
+    int pad = 0;
+
+    memset(dtable, 0x80, 256);
+    for (i = 0; i < sizeof(base64_table) - 1; i++) {
+        dtable[base64_table[i]] = (unsigned char)i;
+    }
+    dtable['='] = 0;
+
+    count = 0;
+    for (i = 0; i < len; i++) {
+        if (dtable[src[i]] != 0x80)
+            count++;
+    }
+
+    if (count == 0 || count % 4) {
+        lua_pushstring(L, "");
+        return 1;
+    }
+
+    olen = count / 4 * 3;
+
+    luaL_Buffer B;
+    luaL_buffinitsize(L, &B, olen);
+
+    pos = out = luaL_prepbuffsize(&B, olen);
+
+    count = 0;
+    for (i = 0; i < len; i++) {
+        tmp = dtable[src[i]];
+        if (tmp == 0x80)
+            continue;
+
+        if (src[i] == '=') {
+            pad++;
+        }
+        block[count] = tmp;
+        count++;
+        if (count == 4) {
+            *pos++ = (block[0] << 2) | (block[1] >> 4);
+            *pos++ = (block[1] << 4) | (block[2] >> 2);
+            *pos++ = (block[2] << 6) | block[3];
+            count = 0;
+            if (pad) {
+                if (pad == 1)
+                    pos--;
+                else if (pad == 2)
+                    pos -= 2;
+                else {
+                    luaL_error(L, "invalid padding");
+                }
+                break;
+            }
+        }
+    }
+    luaL_addsize(&B, pos - out);
+    luaL_pushresult(&B);
+
+    return 1;
+}
+
+int luaopen_tars(lua_State* L)
 {
     // 注册所有的函数
     luaL_Reg funs[] = {
@@ -1383,6 +1530,8 @@ EXPORT int luaopen_tars(lua_State* L)
         {"decodeMap", luatars_decodeMap},
         {"decodeList", luatars_decodeList},
         {"dump", luatars_dump},
+        {"encodeB64", base64_encode},
+        {"decodeB64", base64_decode},
         {NULL, NULL},
     };
     luaL_newlib(L, funs);
@@ -1410,4 +1559,3 @@ EXPORT int luaopen_tars(lua_State* L)
 
     return 1;
 }
-
