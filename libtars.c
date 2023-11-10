@@ -1382,10 +1382,8 @@ static const unsigned char base64_table[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefg
 static int base64_encode(lua_State* L)
 {
     size_t len = 0;
-    const unsigned char* src = luaL_checklstring(L, 1, &len);
-    size_t* out_len;
-    unsigned char *out, *pos;
-    const unsigned char *end, *in;
+    const char* src = luaL_checklstring(L, 1, &len);
+    const char *end, *in;
     size_t olen;
     int line_len;
 
@@ -1403,8 +1401,6 @@ static int base64_encode(lua_State* L)
     end = src + len;
     // 当前位置
     in = src;
-    // 输出位置
-    pos = out;
     line_len = 0;
     while (end - in >= 3) {
         luaL_addchar(&B, base64_table[in[0] >> 2]);
@@ -1455,8 +1451,8 @@ static int base64_encode(lua_State* L)
 static int base64_decode(lua_State* L)
 {
     size_t len = 0;
-    const unsigned char* src = luaL_checklstring(L, 1, &len);
-    unsigned char dtable[256], *out, *pos, block[4], tmp;
+    const char* src = luaL_checklstring(L, 1, &len);
+    char dtable[256], *out, *pos, block[4], tmp;
     size_t i, count, olen;
     int pad = 0;
 
@@ -1468,7 +1464,7 @@ static int base64_decode(lua_State* L)
 
     count = 0;
     for (i = 0; i < len; i++) {
-        if (dtable[src[i]] != 0x80)
+        if (dtable[(unsigned char)src[i]] != 0x80)
             count++;
     }
 
@@ -1486,7 +1482,7 @@ static int base64_decode(lua_State* L)
 
     count = 0;
     for (i = 0; i < len; i++) {
-        tmp = dtable[src[i]];
+        tmp = dtable[(unsigned char)src[i]];
         if (tmp == 0x80)
             continue;
 
