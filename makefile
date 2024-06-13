@@ -1,7 +1,7 @@
 all: tars.so
 
 tars.so: libtars.c
-	g++ $^ -o $@ -fPIC -shared -g -Wall
+	gcc $^ -o $@ -fPIC -shared -g -Wall
 
 r: all
 	lua run.lua

@@ -79,7 +79,6 @@ local s5  = context:encodeStruct("TBook1", {
 
 print("测试字段协议兼容", tars.toJson(context:decodeStruct("TBook", s5)))
 
-
 local s6 = context:encodeStruct("TStudent", {
     iBirth = 298992,
     sId = "这是一行字符串",
@@ -91,7 +90,6 @@ local s6 = context:encodeStruct("TStudent", {
 })
 
 print("测试嵌套结构体协议兼容", tars.toJson(context:decodeStruct("TStudent1", s6)))
-
 
 local s7 = context:encodeStruct("TBook2", {
     iId = 9745, sName = "雀巢咖啡", iWhen = 2751, stBook1 = {
